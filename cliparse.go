@@ -3,15 +3,18 @@ package cliparse
 import (
 	"flag"
 	"fmt"
+	"io"
 	"os"
 )
 
 type Cmd struct {
 	name, desc string
-	helpSum    string
+	// help summary for the cmd, displayed before sub cmds and options list
+	helpSum string
 	flag.FlagSet
 	subCmds map[string]*Cmd
 	run     func(cmd *Cmd) error
+	output  io.Writer
 }
 
 var rootCmd = New(os.Args[0], "", "", nil)
@@ -22,22 +25,28 @@ func New(name, desc, helpSum string, run func(cmd *Cmd) error) *Cmd {
 		desc:    desc,
 		helpSum: helpSum,
 		run:     run,
+		output:  os.Stdout,
 	}
-	c.FlagSet.Init(name, flag.ExitOnError)
+	c.FlagSet.Init(name, flag.ContinueOnError)
 	c.FlagSet.Usage = c.usage
 	return c
 }
 
-func RootCmd() *Cmd {
+func RootCmd(run func(cmd *Cmd) error) *Cmd {
+	rootCmd.run = run
 	return rootCmd
 }
 
-func (c *Cmd) RegisterSubCmds(subCmd *Cmd) {
+func (c *Cmd) SetOutput(out io.Writer) {
+	c.output = out
+}
+
+func (c *Cmd) registerSubCmd(subCmd *Cmd) {
 	if len(subCmd.name) == 0 {
-		panic("sub command has no name")
+		panic("Sub command has no name")
 	}
 	if _, ok := c.subCmds[subCmd.name]; ok {
-		panic(fmt.Sprintf("sub command '%s' redefined", subCmd.name))
+		panic(fmt.Sprintf("Sub command '%s' redefined", subCmd.name))
 	}
 	if c.subCmds == nil {
 		c.subCmds = make(map[string]*Cmd)
@@ -45,40 +54,47 @@ func (c *Cmd) RegisterSubCmds(subCmd *Cmd) {
 	c.subCmds[subCmd.name] = subCmd
 }
 
-func (c *Cmd) Parse(args []string) *Cmd {
+func (c *Cmd) RegisterSubCmds(subCmds ...*Cmd) {
+	for _, sc := range subCmds {
+		c.registerSubCmd(sc)
+	}
+}
+
+func (c *Cmd) Parse(args []string) (*Cmd, error) {
 	if err := c.FlagSet.Parse(args); err != nil {
-		return nil
+		return nil, err
 	}
 	if c.subCmds == nil {
-		return c
+		return c, nil
 	}
 	if c.FlagSet.NArg() > 0 {
 		sc := c.FlagSet.Arg(0)
 		if subc, ok := c.subCmds[sc]; !ok {
-			fmt.Printf("'%s' not recognized.\n", sc)
-			return nil
+			err := fmt.Errorf("Sub command '%s' not recognized.\n", sc)
+			fmt.Fprintf(c.output, "%v\n", err)
+			return nil, err
 		} else {
 			return subc.Parse(c.FlagSet.Args()[1:])
 		}
 	}
-	return c
+	return c, nil
 }
 
-func Parse() *Cmd {
+func Parse() (*Cmd, error) {
 	return rootCmd.Parse(os.Args[1:])
 }
 
 func (c *Cmd) usage() {
-	fmt.Printf("Usage for '%s':\n", c.name)
+	fmt.Fprintf(c.output, "Usage for '%s':\n", c.name)
 	if len(c.helpSum) > 0 {
-		fmt.Println(c.helpSum)
+		fmt.Fprintf(c.output, "%s\n", c.helpSum)
 	}
 	if len(c.subCmds) > 0 {
-		fmt.Printf("Sub commands:\n")
+		fmt.Fprintf(c.output, "Sub commands:\n")
 		for name, sc := range c.subCmds {
-			fmt.Printf("  %s\n\t%s\n", name, sc.desc)
+			fmt.Fprintf(c.output, "  %s\n\t%s\n", name, sc.desc)
 		}
-		fmt.Println()
+		fmt.Fprintf(c.output, "\n")
 	}
 
 	var nflags int
@@ -87,15 +103,16 @@ func (c *Cmd) usage() {
 	})
 
 	if nflags > 0 {
-		fmt.Printf("Options:\n")
+		fmt.Fprintf(c.output, "Options:\n")
 		c.FlagSet.PrintDefaults()
 	}
 }
 
 func (c *Cmd) Run() error {
 	if c.run == nil {
-		c.usage()
-		return nil
+		err := fmt.Errorf("Command '%s' not implemented.", c.name)
+		fmt.Fprintf(c.output, "%v\n", err)
+		return err
 	}
 	return c.run(c)
 }

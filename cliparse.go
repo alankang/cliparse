@@ -12,9 +12,10 @@ type Cmd struct {
 	// help summary for the cmd, displayed before sub cmds and options list
 	helpSum string
 	flag.FlagSet
-	subCmds map[string]*Cmd
-	run     func(cmd *Cmd) error
-	output  io.Writer
+	subCmds   map[string]*Cmd
+	dftSubCmd *Cmd
+	run       func(cmd *Cmd) error
+	output    io.Writer
 }
 
 var rootCmd = New(os.Args[0], "", "", nil)
@@ -41,9 +42,12 @@ func (c *Cmd) SetOutput(out io.Writer) {
 	c.output = out
 }
 
-func (c *Cmd) registerSubCmd(subCmd *Cmd) {
+func (c *Cmd) registerSubCmd(subCmd *Cmd, dft bool) {
 	if len(subCmd.name) == 0 {
 		panic("Sub command has no name")
+	}
+	if c.dftSubCmd != nil && dft {
+		panic(fmt.Sprintf("More than one default sub command defined for %s", c.name))
 	}
 	if _, ok := c.subCmds[subCmd.name]; ok {
 		panic(fmt.Sprintf("Sub command '%s' redefined", subCmd.name))
@@ -52,11 +56,18 @@ func (c *Cmd) registerSubCmd(subCmd *Cmd) {
 		c.subCmds = make(map[string]*Cmd)
 	}
 	c.subCmds[subCmd.name] = subCmd
+	if dft {
+		c.dftSubCmd = subCmd
+	}
+}
+
+func (c *Cmd) RegisterDftSubCmd(subCmd *Cmd) {
+	c.registerSubCmd(subCmd, true)
 }
 
 func (c *Cmd) RegisterSubCmds(subCmds ...*Cmd) {
 	for _, sc := range subCmds {
-		c.registerSubCmd(sc)
+		c.registerSubCmd(sc, false)
 	}
 }
 
@@ -64,10 +75,10 @@ func (c *Cmd) Parse(args []string) (*Cmd, error) {
 	if err := c.FlagSet.Parse(args); err != nil {
 		return nil, err
 	}
-	if c.subCmds == nil {
-		return c, nil
-	}
 	if c.FlagSet.NArg() > 0 {
+		if c.subCmds == nil {
+			return c, nil
+		}
 		sc := c.FlagSet.Arg(0)
 		if subc, ok := c.subCmds[sc]; !ok {
 			err := fmt.Errorf("Sub command '%s' not recognized.\n", sc)
@@ -75,6 +86,10 @@ func (c *Cmd) Parse(args []string) (*Cmd, error) {
 			return nil, err
 		} else {
 			return subc.Parse(c.FlagSet.Args()[1:])
+		}
+	} else {
+		if c.dftSubCmd != nil {
+			return c.dftSubCmd, nil
 		}
 	}
 	return c, nil
@@ -92,7 +107,11 @@ func (c *Cmd) usage() {
 	if len(c.subCmds) > 0 {
 		fmt.Fprintf(c.output, "Sub commands:\n")
 		for name, sc := range c.subCmds {
-			fmt.Fprintf(c.output, "  %s\n\t%s\n", name, sc.desc)
+			dft := ' '
+			if name == c.dftSubCmd.name {
+				dft = '*'
+			}
+			fmt.Fprintf(c.output, "%c %s\n\t%s\n", dft, name, sc.desc)
 		}
 		fmt.Fprintf(c.output, "\n")
 	}

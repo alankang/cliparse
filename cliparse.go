@@ -20,6 +20,16 @@ type Cmd struct {
 
 var rootCmd = New(os.Args[0], "", "", nil)
 
+func init() {
+	// hard coded '.help' sub command to show full help
+	rootCmd.RegisterSubCmds(New(".help", "verbose help", "", runVerboseHelp))
+}
+
+func runVerboseHelp(cmd *Cmd) error {
+	rootCmd.usage_ext(true)
+	return nil
+}
+
 func New(name, desc, helpSum string, run func(cmd *Cmd) error) *Cmd {
 	c := &Cmd{
 		name:    name,
@@ -100,6 +110,10 @@ func Parse() (*Cmd, error) {
 }
 
 func (c *Cmd) usage() {
+	c.usage_ext(false)
+}
+
+func (c *Cmd) usage_ext(verbose bool) {
 	fmt.Fprintf(c.output, "Usage for '%s':\n", c.name)
 	if len(c.helpSum) > 0 {
 		fmt.Fprintf(c.output, "%s\n", c.helpSum)
@@ -107,6 +121,9 @@ func (c *Cmd) usage() {
 	if len(c.subCmds) > 0 {
 		fmt.Fprintf(c.output, "Sub commands:\n")
 		for name, sc := range c.subCmds {
+			if !verbose && name[0] == '.' {
+				continue
+			}
 			dft := ' '
 			if name == c.dftSubCmd.name {
 				dft = '*'
